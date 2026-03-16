@@ -23,7 +23,7 @@ func toolDeployments(c *config.Config) mcp.Tool {
 			OpenWorldHint:   ptr(true),
 		}),
 	}
-	options = append(options, maybeWithEnvironmentParam(c)...)
+	options = withTargetingOptions(options, c, false, false)
 	return mcp.NewTool(toolNameDeployments, options...)
 }
 

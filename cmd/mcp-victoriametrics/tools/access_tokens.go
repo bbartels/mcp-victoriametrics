@@ -23,11 +23,7 @@ func toolAccessTokens(c *config.Config) mcp.Tool {
 			OpenWorldHint:   ptr(true),
 		}),
 	}
-	options = append(options, maybeWithEnvironmentParam(c)...)
-	options = append(
-		options,
-		maybeWithDeploymentIDParam(c)...,
-	)
+	options = withTargetingOptions(options, c, true, false)
 	return mcp.NewTool(toolNameAccessTokens, options...)
 }
 
@@ -36,12 +32,9 @@ func toolAccessTokensHandler(ctx context.Context, cfg *config.Config, tcr mcp.Ca
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	deploymentID, err := GetToolReqParam[string](tcr, "deployment_id", true)
+	deploymentID, err := requireCloudDeploymentID(instance, tcr)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to get deployment_id parameter: %v", err)), nil
-	}
-	if deploymentID == "" {
-		return mcp.NewToolResultError(fmt.Sprintf("deployment_id parameter is required for cloud env %q", instance.Name())), nil
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	accessTokens, err := instance.VMC().ListDeploymentAccessTokens(ctx, deploymentID)
 	if err != nil {

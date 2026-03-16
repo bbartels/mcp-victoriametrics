@@ -24,8 +24,7 @@ func toolFlags(c *config.Config) mcp.Tool {
 			OpenWorldHint:   ptr(true),
 		}),
 	}
-	options = append(options, maybeWithEnvironmentParam(c)...)
-	options = append(options, maybeWithDeploymentIDParam(c)...)
+	options = withTargetingOptions(options, c, true, false)
 	return mcp.NewTool(toolNameFlags, options...)
 }
 
@@ -35,12 +34,9 @@ func toolFlagsHandler(ctx context.Context, cfg *config.Config, tcr mcp.CallToolR
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if instance.IsCloud() {
-		deploymentID, err := GetToolReqParam[string](tcr, "deployment_id", true)
+		deploymentID, err := requireCloudDeploymentID(instance, tcr)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to get deployment_id parameter: %v", err)), nil
-		}
-		if deploymentID == "" {
-			return mcp.NewToolResultError(fmt.Sprintf("deployment_id parameter is required for cloud env %q", instance.Name())), nil
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 		dd, err := instance.VMC().GetDeploymentDetails(ctx, deploymentID)
 		if err != nil {

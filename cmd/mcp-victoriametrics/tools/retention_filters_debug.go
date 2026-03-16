@@ -22,8 +22,7 @@ This tool use "/retention-filters-debug" API endpoint of VictoriaMetrics API.`),
 			OpenWorldHint:   ptr(true),
 		}),
 	}
-	options = append(options, maybeWithEnvironmentParam(c)...)
-	options = append(options, maybeWithDeploymentIDParam(c)...)
+	options = withTargetingOptions(options, c, true, false)
 	options = append(
 		options,
 		mcp.WithString("flags",

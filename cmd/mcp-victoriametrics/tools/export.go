@@ -23,9 +23,7 @@ func toolExport(c *config.Config) mcp.Tool {
 			OpenWorldHint:   ptr(true),
 		}),
 	}
-	options = append(options, maybeWithEnvironmentParam(c)...)
-	options = append(options, maybeWithDeploymentIDParam(c)...)
-	options = append(options, maybeWithTenantParam(c)...)
+	options = withTargetingOptions(options, c, true, true)
 	options = append(
 		options,
 		mcp.WithString("match",

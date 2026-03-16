@@ -117,12 +117,9 @@ func getBearerToken(ctx context.Context, instance *config.Instance, tcr mcp.Call
 		return instance.BearerToken(), nil
 	}
 
-	deploymentID, err := GetToolReqParam[string](tcr, "deployment_id", true)
+	deploymentID, err := requireCloudDeploymentID(instance, tcr)
 	if err != nil {
-		return "", fmt.Errorf("failed to get deployment_id parameter: %v", err)
-	}
-	if deploymentID == "" {
-		return "", fmt.Errorf("deployment_id parameter is required for cloud env %q", instance.Name())
+		return "", err
 	}
 
 	key := cloudCacheKey(instance, deploymentID)
@@ -159,12 +156,9 @@ func getBearerToken(ctx context.Context, instance *config.Instance, tcr mcp.Call
 func getRootURL(ctx context.Context, instance *config.Instance, tcr mcp.CallToolRequest, path ...string) (string, error) {
 	entrypointURL := instance.EntryPointURL()
 	if instance.IsCloud() {
-		deploymentID, err := GetToolReqParam[string](tcr, "deployment_id", true)
+		deploymentID, err := requireCloudDeploymentID(instance, tcr)
 		if err != nil {
-			return "", fmt.Errorf("failed to get deployment_id parameter: %v", err)
-		}
-		if deploymentID == "" {
-			return "", fmt.Errorf("deployment_id parameter is required for cloud env %q", instance.Name())
+			return "", err
 		}
 		info, err := getCloudDeploymentInfo(ctx, instance, deploymentID)
 		if err != nil {
@@ -182,12 +176,9 @@ func getSelectURL(ctx context.Context, instance *config.Instance, tcr mcp.CallTo
 	entrypointURL := instance.EntryPointURL()
 	isSingle := instance.IsSingle()
 	if instance.IsCloud() {
-		deploymentID, err := GetToolReqParam[string](tcr, "deployment_id", true)
+		deploymentID, err := requireCloudDeploymentID(instance, tcr)
 		if err != nil {
-			return "", fmt.Errorf("failed to get deployment_id parameter: %v", err)
-		}
-		if deploymentID == "" {
-			return "", fmt.Errorf("deployment_id parameter is required for cloud env %q", instance.Name())
+			return "", err
 		}
 		info, err := getCloudDeploymentInfo(ctx, instance, deploymentID)
 		if err != nil {
@@ -282,42 +273,45 @@ func cloudCacheKey(instance *config.Instance, deploymentID string) string {
 	return instance.Name() + ":" + deploymentID
 }
 
-func maybeWithEnvironmentParam(c *config.Config) []mcp.ToolOption {
-	if !c.HasMultipleInstances() {
-		return nil
+func requireCloudDeploymentID(instance *config.Instance, tcr mcp.CallToolRequest) (string, error) {
+	deploymentID, err := GetToolReqParam[string](tcr, "deployment_id", true)
+	if err != nil {
+		return "", fmt.Errorf("failed to get deployment_id parameter: %v", err)
 	}
-	return []mcp.ToolOption{mcp.WithString("env",
-		mcp.Title("Environment"),
-		mcp.Description("Optional environment to target. If omitted, the default environment is used."),
-		mcp.Pattern(`^[a-z0-9_]+$`),
-	)}
+	if deploymentID == "" {
+		return "", fmt.Errorf("deployment_id parameter is required for cloud env %q", instance.Name())
+	}
+	return deploymentID, nil
 }
 
-func maybeWithDeploymentIDParam(c *config.Config) []mcp.ToolOption {
-	if !c.HasCloudInstances() {
-		return nil
+func withTargetingOptions(options []mcp.ToolOption, c *config.Config, includeDeploymentID, includeTenant bool) []mcp.ToolOption {
+	if c.HasMultipleInstances() {
+		options = append(options, mcp.WithString("env",
+			mcp.Title("Environment"),
+			mcp.Description("Optional environment to target. If omitted, the default environment is used."),
+			mcp.Pattern(`^[a-z0-9_]+$`),
+		))
 	}
-	options := []mcp.PropertyOption{
-		mcp.Title("Deployment ID"),
-		mcp.Description("Deployment ID in VictoriaMetrics Cloud. Required when the selected env is a cloud env."),
-		mcp.Pattern(`^[a-zA-Z0-9\-_]+$`),
+	if includeDeploymentID && c.HasCloudInstances() {
+		propertyOptions := []mcp.PropertyOption{
+			mcp.Title("Deployment ID"),
+			mcp.Description("Deployment ID in VictoriaMetrics Cloud. Required when the selected env is a cloud env."),
+			mcp.Pattern(`^[a-zA-Z0-9\-_]+$`),
+		}
+		if c.HasOnlyCloudInstances() {
+			propertyOptions = append(propertyOptions, mcp.Required())
+		}
+		options = append(options, mcp.WithString("deployment_id", propertyOptions...))
 	}
-	if c.HasOnlyCloudInstances() {
-		options = append(options, mcp.Required())
+	if includeTenant && c.HasClusterInstances() {
+		options = append(options, mcp.WithString("tenant",
+			mcp.Title("Tenant name"),
+			mcp.Description("Tenant name for cluster or cloud environments. If omitted, the selected env default is used."),
+			mcp.DefaultString("0"),
+			mcp.Pattern(`^([0-9]+)(:[0-9]+)?$`),
+		))
 	}
-	return []mcp.ToolOption{mcp.WithString("deployment_id", options...)}
-}
-
-func maybeWithTenantParam(c *config.Config) []mcp.ToolOption {
-	if !c.HasClusterInstances() {
-		return nil
-	}
-	return []mcp.ToolOption{mcp.WithString("tenant",
-		mcp.Title("Tenant name"),
-		mcp.Description("Tenant name for cluster or cloud environments. If omitted, the selected env default is used."),
-		mcp.DefaultString("0"),
-		mcp.Pattern(`^([0-9]+)(:[0-9]+)?$`),
-	)}
+	return options
 }
 
 func ptr[T any](v T) *T {

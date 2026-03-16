@@ -28,9 +28,7 @@ This information is obtained from the "/api/v1/status/top_queries" HTTP endpoint
 			OpenWorldHint:   ptr(true),
 		}),
 	}
-	options = append(options, maybeWithEnvironmentParam(c)...)
-	options = append(options, maybeWithDeploymentIDParam(c)...)
-	options = append(options, maybeWithTenantParam(c)...)
+	options = withTargetingOptions(options, c, true, true)
 	options = append(
 		options,
 		mcp.WithNumber("topN",

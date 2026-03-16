@@ -21,8 +21,7 @@ func toolTenants(c *config.Config) mcp.Tool {
 			OpenWorldHint:   ptr(true),
 		}),
 	}
-	options = append(options, maybeWithEnvironmentParam(c)...)
-	options = append(options, maybeWithDeploymentIDParam(c)...)
+	options = withTargetingOptions(options, c, true, false)
 	return mcp.NewTool(toolNameTenants, options...)
 }
 
