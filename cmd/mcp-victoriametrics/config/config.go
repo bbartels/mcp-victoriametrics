@@ -77,6 +77,16 @@ type Config struct {
 	defaultInstance   string
 }
 
+type instanceSpec struct {
+	name               string
+	entrypointEnv      string
+	instanceTypeEnv    string
+	bearerTokenEnv     string
+	headersEnv         string
+	defaultTenantIDEnv string
+	apiKeyEnv          string
+}
+
 func InitConfig() (*Config, error) {
 	disabledTools, isDisabledToolsSet := os.LookupEnv("MCP_DISABLED_TOOLS")
 	if disabledTools == "" && !isDisabledToolsSet {
@@ -156,14 +166,33 @@ func InitConfig() (*Config, error) {
 }
 
 func initInstances() (map[string]*Instance, []string, string, error) {
+	specs, defaultName, err := getInstanceSpecs()
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	instances := make(map[string]*Instance, len(specs))
+	order := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		instance, err := newInstance(spec)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		instances[spec.name] = instance
+		order = append(order, spec.name)
+	}
+	return instances, order, defaultName, nil
+}
+
+func getInstanceSpecs() ([]instanceSpec, string, error) {
 	if value := os.Getenv("VM_ENVIRONMENTS"); value != "" {
 		if err := validateLegacyVarsUnused(); err != nil {
-			return nil, nil, "", err
+			return nil, "", err
 		}
 
 		names, err := parseInstanceNames(value)
 		if err != nil {
-			return nil, nil, "", err
+			return nil, "", err
 		}
 
 		defaultName := strings.TrimSpace(strings.ToLower(os.Getenv("VM_DEFAULT_ENVIRONMENT")))
@@ -171,81 +200,76 @@ func initInstances() (map[string]*Instance, []string, string, error) {
 			defaultName = names[0]
 		}
 		if !contains(names, defaultName) {
-			return nil, nil, "", fmt.Errorf("VM_DEFAULT_ENVIRONMENT %q is not listed in VM_ENVIRONMENTS", defaultName)
+			return nil, "", fmt.Errorf("VM_DEFAULT_ENVIRONMENT %q is not listed in VM_ENVIRONMENTS", defaultName)
 		}
 
-		instances := make(map[string]*Instance, len(names))
+		specs := make([]instanceSpec, 0, len(names))
 		for _, name := range names {
-			prefix := instancePrefix(name)
-			instance, err := newInstance(
-				name,
-				os.Getenv(prefix+"ENTRYPOINT"),
-				os.Getenv(prefix+"TYPE"),
-				os.Getenv(prefix+"BEARER_TOKEN"),
-				parseHeaders(os.Getenv(prefix+"HEADERS")),
-				os.Getenv(prefix+"DEFAULT_TENANT_ID"),
-				os.Getenv("VMC_"+strings.ToUpper(name)+"_API_KEY"),
-			)
-			if err != nil {
-				return nil, nil, "", err
-			}
-			instances[name] = instance
+			specs = append(specs, instanceSpecForEnv(name))
 		}
-		return instances, names, defaultName, nil
+		return specs, defaultName, nil
 	}
 
-	instance, err := newInstance(
-		defaultInstanceName,
-		os.Getenv("VM_INSTANCE_ENTRYPOINT"),
-		os.Getenv("VM_INSTANCE_TYPE"),
-		os.Getenv("VM_INSTANCE_BEARER_TOKEN"),
-		parseHeaders(os.Getenv("VM_INSTANCE_HEADERS")),
-		os.Getenv("VM_DEFAULT_TENANT_ID"),
-		os.Getenv("VMC_API_KEY"),
-	)
-	if err != nil {
-		return nil, nil, "", err
-	}
-	return map[string]*Instance{defaultInstanceName: instance}, []string{defaultInstanceName}, defaultInstanceName, nil
+	return []instanceSpec{legacyInstanceSpec()}, defaultInstanceName, nil
 }
 
-func newInstance(name, entrypoint, instanceType, bearerToken string, headers map[string]string, defaultTenantID, apiKey string) (*Instance, error) {
+func legacyInstanceSpec() instanceSpec {
+	return instanceSpec{
+		name:               defaultInstanceName,
+		entrypointEnv:      "VM_INSTANCE_ENTRYPOINT",
+		instanceTypeEnv:    "VM_INSTANCE_TYPE",
+		bearerTokenEnv:     "VM_INSTANCE_BEARER_TOKEN",
+		headersEnv:         "VM_INSTANCE_HEADERS",
+		defaultTenantIDEnv: "VM_DEFAULT_TENANT_ID",
+		apiKeyEnv:          "VMC_API_KEY",
+	}
+}
+
+func instanceSpecForEnv(name string) instanceSpec {
+	prefix := instancePrefix(name)
+	return instanceSpec{
+		name:               name,
+		entrypointEnv:      prefix + "ENTRYPOINT",
+		instanceTypeEnv:    prefix + "TYPE",
+		bearerTokenEnv:     prefix + "BEARER_TOKEN",
+		headersEnv:         prefix + "HEADERS",
+		defaultTenantIDEnv: prefix + "DEFAULT_TENANT_ID",
+		apiKeyEnv:          "VMC_" + strings.ToUpper(name) + "_API_KEY",
+	}
+}
+
+func newInstance(spec instanceSpec) (*Instance, error) {
+	entrypoint := os.Getenv(spec.entrypointEnv)
+	instanceType := os.Getenv(spec.instanceTypeEnv)
+	bearerToken := os.Getenv(spec.bearerTokenEnv)
+	headers := parseHeaders(os.Getenv(spec.headersEnv))
+	defaultTenantID := os.Getenv(spec.defaultTenantIDEnv)
+	apiKey := os.Getenv(spec.apiKeyEnv)
+
 	if entrypoint == "" && apiKey == "" {
-		if name == defaultInstanceName {
-			return nil, fmt.Errorf("VM_INSTANCE_ENTRYPOINT or VMC_API_KEY is not set")
-		}
-		return nil, fmt.Errorf("%sENTRYPOINT or VMC_%s_API_KEY is not set", instancePrefix(name), strings.ToUpper(name))
+		return nil, fmt.Errorf("%s or %s is not set", spec.entrypointEnv, spec.apiKeyEnv)
 	}
 	if entrypoint != "" && apiKey != "" {
-		return nil, fmt.Errorf("env %q: ENTRYPOINT and API_KEY cannot be set at the same time", name)
+		return nil, fmt.Errorf("env %q: %s and %s cannot be set at the same time", spec.name, spec.entrypointEnv, spec.apiKeyEnv)
 	}
 	if entrypoint != "" && instanceType == "" {
-		if name == defaultInstanceName {
-			return nil, fmt.Errorf("VM_INSTANCE_TYPE is not set")
-		}
-		return nil, fmt.Errorf("env %q: TYPE is not set", name)
+		return nil, fmt.Errorf("%s is not set", spec.instanceTypeEnv)
 	}
 	if entrypoint != "" && instanceType != "single" && instanceType != "cluster" {
-		if name == defaultInstanceName {
-			return nil, fmt.Errorf("VM_INSTANCE_TYPE must be 'single' or 'cluster'")
-		}
-		return nil, fmt.Errorf("env %q: TYPE must be 'single' or 'cluster'", name)
+		return nil, fmt.Errorf("%s must be 'single' or 'cluster'", spec.instanceTypeEnv)
 	}
 
 	resolvedTenantID := "0"
 	if defaultTenantID != "" {
 		tenantID, err := auth.NewToken(strings.ToLower(defaultTenantID))
 		if err != nil {
-			if name == defaultInstanceName {
-				return nil, fmt.Errorf("failed to parse VM_DEFAULT_TENANT_ID %q: %w", defaultTenantID, err)
-			}
-			return nil, fmt.Errorf("env %q: failed to parse DEFAULT_TENANT_ID %q: %w", name, defaultTenantID, err)
+			return nil, fmt.Errorf("failed to parse %s %q: %w", spec.defaultTenantIDEnv, defaultTenantID, err)
 		}
 		resolvedTenantID = tenantID.String()
 	}
 
 	instance := &Instance{
-		name:            name,
+		name:            spec.name,
 		entrypoint:      entrypoint,
 		instanceType:    instanceType,
 		bearerToken:     bearerToken,
@@ -257,20 +281,14 @@ func newInstance(name, entrypoint, instanceType, bearerToken string, headers map
 	if apiKey != "" {
 		instance.vmc, err = vmcloud.New(apiKey)
 		if err != nil {
-			if name == defaultInstanceName {
-				return nil, fmt.Errorf("failed to create VMCloud API client: %w", err)
-			}
-			return nil, fmt.Errorf("env %q: failed to create VMCloud API client: %w", name, err)
+			return nil, fmt.Errorf("failed to create VMCloud API client from %s: %w", spec.apiKeyEnv, err)
 		}
 		return instance, nil
 	}
 
 	instance.entryPointURL, err = url.Parse(entrypoint)
 	if err != nil {
-		if name == defaultInstanceName {
-			return nil, fmt.Errorf("failed to parse URL from VM_INSTANCE_ENTRYPOINT: %w", err)
-		}
-		return nil, fmt.Errorf("env %q: failed to parse URL from ENTRYPOINT: %w", name, err)
+		return nil, fmt.Errorf("failed to parse URL from %s: %w", spec.entrypointEnv, err)
 	}
 	return instance, nil
 }
